@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  mysql_db:
+    platform: linux/x86_64
+    image: mysql:5.7
+    #image: "arm64v8/mysql:8.0.27"  # we have the same version of mysql in the prod
+    container_name: mysql56-container
+    environment:
+      MYSQL_ROOT_USER: root
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: analytics
+      MYSQL_USER: nonroot
+      MYSQL_PASSWORD: nonroot
+
+  psql_db:
+    image: "postgres:9.5.15"
+    container_name: psql-container
+    environment:
+      POSTGRES_ROOT_USER: root
+      POSTGRES_ROOT_PASSWORD: root
+      POSTGRES_DB: main
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+
+  main:
+    build:
+      context: main
+    environment:
+      POSTGRESQL_CS: 'postgresql+psycopg2://postgres:password@psql_db:5432/main'
+    depends_on:
+      - psql_db
+    command: ["python", "./main.py" ]
+
+  analytics:
+    build:
+      context: analytics
+    environment:
+      POSTGRESQL_CS: 'postgresql+psycopg2://postgres:password@psql_db:5432/main'
+      MYSQL_CS: 'mysql+pymysql://nonroot:nonroot@mysql_db/analytics?charset=utf8'
+
+    depends_on:
+      - mysql_db
+      - psql_db
+      - main
+    command: ["python", "./analytics.py" ]
+
+
