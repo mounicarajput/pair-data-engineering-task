@@ -1,79 +1,100 @@
+import logging
+import ast
+import math
 from os import environ
 from time import sleep
 import pandas as pd
-import ast
 from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
-import math
 
 
-print('Waiting for the data generator...')
-sleep(20)
-print('ETL Starting...')
 
-while True:
-    try:
-        psql_engine = create_engine(environ["POSTGRESQL_CS"], pool_pre_ping=True, pool_size=10)
-        break
-    except OperationalError:
-        sleep(0.1)
-print('Connection to PostgresSQL  successful.')
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def connect_to_postgresql():
+    """Connect to PostgreSQL and return the engine"""
+    while True:
+        try:
+            psql_engine = create_engine(environ["POSTGRESQL_CS"], pool_pre_ping=True, pool_size=10)
+            return psql_engine
+        except OperationalError:
+            sleep(0.1)
 
 # Write the solution here
 
-# Read data from PostgreSQL into a pandas DataFrame
-pg_query = "SELECT * FROM devices"
-df = pd.read_sql_query(pg_query, psql_engine)
+def transform_data(psql_engine):
+    """Transform the data from PostgreSQL"""
+    pg_query = "SELECT * FROM devices"
+    df = pd.read_sql_query(pg_query, psql_engine)
 
-# Convert the 'location' column from string to dictionary
-df['location'] = df['location'].apply(ast.literal_eval)
+    # Convert the 'location' column from string to dictionary
+    df['location'] = df['location'].apply(ast.literal_eval)
 
-# Convert the 'time' column to datetime
-df['time'] = pd.to_datetime(df['time'], unit='s')
+    # Convert the 'time' column to datetime
+    df['time'] = pd.to_datetime(df['time'], unit='s')
 
-# Group the data by device_id and hour
-grouped = df.groupby([df['device_id'], df['time'].dt.hour])
+    # Group the data by device_id and hour
+    grouped = df.groupby([df['device_id'], df['time'].dt.hour])
 
-# Calculate the maximum temperatures per device per hour
-max_temperatures = grouped['temperature'].max()
+    # Calculate the maximum temperatures per device per hour
+    max_temperatures = grouped['temperature'].max()
 
-# Calculate the amount of data points aggregated per device per hour
-data_points_count = grouped.size()
+    # Calculate the amount of data points aggregated per device per hour
+    data_points_count = grouped.size()
 
-# Calculate the total distance of device movement per device per hour
-def calculate_distance(group):
-    latitudes = group['location'].apply(lambda x: math.radians(float(x['latitude'])))
-    longitudes = group['location'].apply(lambda x: math.radians(float(x['longitude'])))
-    lat_diff = latitudes - latitudes.shift()
-    lon_diff = longitudes - longitudes.shift()
-    a = (lat_diff.apply(math.sin) * lat_diff.shift().apply(math.sin)) + \
-        (lat_diff.apply(math.cos) * lat_diff.shift().apply(math.cos) * lon_diff.apply(math.cos))
-    distance = a.apply(math.acos) * 6371  # Radius of the Earth in kilometers
-    return distance.sum()
+    # Calculate the total distance of device movement per device per hour
+    def calculate_distance(group):
+        latitudes = group['location'].apply(lambda x: math.radians(float(x['latitude'])))
+        longitudes = group['location'].apply(lambda x: math.radians(float(x['longitude'])))
+        lat_diff = latitudes - latitudes.shift()
+        lon_diff = longitudes - longitudes.shift()
+        a = (lat_diff.apply(math.sin) * lat_diff.shift().apply(math.sin)) + \
+            (lat_diff.apply(math.cos) * lat_diff.shift().apply(math.cos) * lon_diff.apply(math.cos))
+        distance = a.apply(math.acos) * 6371  # Radius of the Earth in kilometers
+        return distance.sum()
 
-total_distance = grouped.apply(calculate_distance)
-# Print the results
-print("Maximum temperatures:")
-print(max_temperatures)
-print("\nData points count:")
-print(data_points_count)
-print("\nTotal distance of device movement:")
-print(total_distance)
+    total_distance = grouped.apply(calculate_distance)
+    return max_temperatures, data_points_count, total_distance
 
+def connect_to_mysql():
+    """Connect to MySQL and return the engine"""
+    while True:
+        try:
+            mysql_engine = create_engine(environ["MYSQL_CS"], pool_pre_ping=True, pool_size=10)
+            return mysql_engine
+        except OperationalError:
+            sleep(0.1)
+            print('Connection to MYSQL  successful.')
 
+def write_to_mysql(mysql_engine, max_temperatures, data_points_count, total_distance):
+    """Write the transformed data to MySQL"""
 
-#my_conn=create_engine("mysql+pymysql://root:password@localhost/analytics")
+    max_temperatures.to_sql(con=mysql_engine,name='max_temperatures',if_exists='append',index=False)
+    data_points_count.to_sql(con=mysql_engine,name='data_points_count',if_exists='append',index=False)
+    total_distance.to_sql(con=mysql_engine,name='total_distance',if_exists='append',index=False)
 
-while True:
-    try:
-        mysql_engine = create_engine(environ["MYSQL_CS"], pool_pre_ping=True, pool_size=10)
-        break
-    except OperationalError:
-        sleep(0.1)
-print('Connection to MYSQL  successful.')
+def main():
+    logger.info('Waiting for the data generator...')
+    sleep(20)
+    logger.info('ETL Starting...')
 
-max_temperatures.to_sql(con=mysql_engine,name='max_temperatures',if_exists='append',index=False)
-data_points_count.to_sql(con=mysql_engine,name='data_points_count',if_exists='append',index=False)
-total_distance.to_sql(con=mysql_engine,name='total_distance',if_exists='append',index=False)
+    # Connect to PostgreSQL
+    psql_engine = connect_to_postgresql()
+    logger.info('Connection to PostgreSQL successful.')
 
-print("ETL Successful")
+    # Transform the data
+    max_temperatures, data_points_count, total_distance = transform_data(psql_engine)
+
+    # Connect to MySQL
+    mysql_engine = connect_to_mysql()
+    logger.info('Connection to MySQL successful.')
+
+    # Write the transformed data to MySQL
+    write_to_mysql(mysql_engine, max_temperatures, data_points_count, total_distance)
+
+    logger.info("ETL Successful")
+
+if __name__ == '__main__':
+    main()
