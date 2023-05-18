@@ -37,7 +37,7 @@ services:
       context: analytics
     environment:
       POSTGRESQL_CS: 'postgresql+psycopg2://postgres:password@psql_db:5432/main'
-      MYSQL_CS: 'mysql+pymysql://nonroot:nonroot@mysql_db/analytics?charset=utf8'
+      MYSQL_CS: 'mysql+pymysql://nonroot:nonroot@mysql_db/analytics'
 
     depends_on:
       - mysql_db
