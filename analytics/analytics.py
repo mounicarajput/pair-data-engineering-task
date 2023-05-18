@@ -56,7 +56,7 @@ def transform_data(psql_engine):
         return distance.sum()
 
     total_distance = grouped.apply(calculate_distance)
-    return max_temperatures, data_points_count, total_distance
+    return pd.DataFrame({'max_temperatures': max_temperatures, 'data_points_count': data_points_count, 'total_distance': total_distance})
 
 def connect_to_mysql():
     """Connect to MySQL and return the engine"""
@@ -68,12 +68,9 @@ def connect_to_mysql():
             sleep(0.1)
             print('Connection to MYSQL  successful.')
 
-def write_to_mysql(mysql_engine, max_temperatures, data_points_count, total_distance):
+def write_to_mysql(mysql_engine, transformed_data):
     """Write the transformed data to MySQL"""
-
-    max_temperatures.to_sql(con=mysql_engine,name='max_temperatures',if_exists='append',index=False)
-    data_points_count.to_sql(con=mysql_engine,name='data_points_count',if_exists='append',index=False)
-    total_distance.to_sql(con=mysql_engine,name='total_distance',if_exists='append',index=False)
+    transformed_data.to_sql(con=mysql_engine, name='transformed_data', if_exists='append', index=False)
 
 def main():
     logger.info('Waiting for the data generator...')
@@ -85,14 +82,14 @@ def main():
     logger.info('Connection to PostgreSQL successful.')
 
     # Transform the data
-    max_temperatures, data_points_count, total_distance = transform_data(psql_engine)
+    transformed_data = transform_data(psql_engine)
 
     # Connect to MySQL
     mysql_engine = connect_to_mysql()
     logger.info('Connection to MySQL successful.')
 
     # Write the transformed data to MySQL
-    write_to_mysql(mysql_engine, max_temperatures, data_points_count, total_distance)
+    write_to_mysql(mysql_engine,transformed_data)
 
     logger.info("ETL Successful")
 
