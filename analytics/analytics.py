@@ -6,7 +6,8 @@ from time import sleep
 import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
-
+import numpy as np
+from math import radians, cos, sin, acos
 
 
 # Configure logging
@@ -35,28 +36,55 @@ def transform_data(psql_engine):
     # Convert the 'time' column to datetime
     df['time'] = pd.to_datetime(df['time'], unit='s')
 
+    # Extract latitude and longitude from the location column
+    df['latitude'] = df['location'].apply(lambda loc: loc['latitude'])
+    df['longitude'] = df['location'].apply(lambda loc: loc['longitude'])
+
     # Group the data by device_id and hour
     grouped = df.groupby([df['device_id'], df['time'].dt.hour])
 
     # Calculate the maximum temperatures per device per hour
     max_temperatures = grouped['temperature'].max()
 
+
     # Calculate the amount of data points aggregated per device per hour
     data_points_count = grouped.size()
 
     # Calculate the total distance of device movement per device per hour
-    def calculate_distance(group):
-        latitudes = group['location'].apply(lambda x: math.radians(float(x['latitude'])))
-        longitudes = group['location'].apply(lambda x: math.radians(float(x['longitude'])))
-        lat_diff = latitudes - latitudes.shift()
-        lon_diff = longitudes - longitudes.shift()
-        a = (lat_diff.apply(math.sin) * lat_diff.shift().apply(math.sin)) + \
-            (lat_diff.apply(math.cos) * lat_diff.shift().apply(math.cos) * lon_diff.apply(math.cos))
-        distance = a.apply(math.acos) * 6371  # Radius of the Earth in kilometers
-        return distance.sum()
+    def calculate_distance(lat1, lon1, lat2, lon2):
+        lat1_rad = radians(lat1)
+        lon1_rad = radians(lon1)
+        lat2_rad = radians(lat2)
+        lon2_rad = radians(lon2)
 
-    total_distance = grouped.apply(calculate_distance)
-    return pd.DataFrame({'max_temperatures': max_temperatures, 'data_points_count': data_points_count, 'total_distance': total_distance})
+        distance = acos(sin(lat1_rad) * sin(lat2_rad) + cos(lat1_rad) * cos(lat2_rad) * cos(lon2_rad - lon1_rad)) * 6371
+        return distance
+
+    def calculate_hourly_distance(df):
+        df['distance'] = np.nan
+        df['latitude'] = df['latitude'].astype(float)  # Convert latitude to float
+        df['longitude'] = df['longitude'].astype(float) # Convert longitude to float
+        df['latitude_rad'] = np.radians(df['latitude'])
+        df['longitude_rad'] = np.radians(df['longitude'])
+
+        for device_id in df['device_id'].unique():
+            device_df = df[df['device_id'] == device_id]
+            device_df = device_df.sort_values('time')
+
+            for i in range(1, len(device_df)):
+                lat1 = device_df.iloc[i - 1]['latitude_rad']
+                lon1 = device_df.iloc[i - 1]['longitude_rad']
+                lat2 = device_df.iloc[i]['latitude_rad']
+                lon2 = device_df.iloc[i]['longitude_rad']
+
+                distance = calculate_distance(lat1, lon1, lat2, lon2)
+                df.loc[device_df.index[i], 'distance'] = distance
+
+        hourly_distance = df.groupby(['device_id', df['time'].dt.hour])['distance'].sum()
+        return hourly_distance
+
+    hourly_distance = calculate_hourly_distance(df)
+    return pd.DataFrame({'max_temperatures': max_temperatures, 'data_points_count': data_points_count, 'total_distance': hourly_distance})
 
 def connect_to_mysql():
     """Connect to MySQL and return the engine"""
